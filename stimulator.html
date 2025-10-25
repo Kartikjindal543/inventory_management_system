@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OS Concurrency Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for the log */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #2d3748; /* gray-800 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4a5568; /* gray-600 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #718096; /* gray-500 */
+        }
+        html, body {
+            height: 100%;
+            overflow: hidden; /* Prevent double scrollbars */
+        }
+        .main-container {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Make log and user-grid containers fill space */
+        #log-container, #user-grid-container {
+            flex: 1;
+            overflow: hidden;
+            position: relative; /* For flex-1 to work correctly with overflow */
+        }
+        /* Make the actual log/grid content scrollable */
+        #log, #user-grid {
+            /* height: 100%; */ /* <-- Layout Fix #1 */
+            overflow-y: auto;
+        }
+        .user-status {
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans">
+
+    <div class="main-container p-4 md:p-6 max-w-7xl mx-auto">
+        
+        <header class="mb-4 text-center">
+            <h1 class="text-3xl font-bold text-white">E-commerce Inventory Simulator</h1>
+            <p class="text-base text-gray-400">Demonstrating Race Conditions & Mutex Solutions (OS Concepts)</p>
+        </header>
+
+        <div class="flex-1 flex flex-col lg:flex-row overflow-hidden gap-4">
+
+            <div class="flex-1 flex flex-col overflow-hidden gap-4">
+                <div class="bg-gray-800 p-4 rounded-lg shadow-lg">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="stock" class="block text-sm font-medium mb-1">Initial Stock Count</label>
+                            <input type="number" id="stock" value="20" class="w-full bg-gray-700 text-white rounded-md border-gray-600 focus:ring-blue-500 focus:border-blue-500 p-2 shadow-sm">
+                        </div>
+                        <div>
+                            <label for="users" class="block text-sm font-medium mb-1">Concurrent Users</label>
+                            <input type="number" id="users" value="100" class="w-full bg-gray-700 text-white rounded-md border-gray-600 focus:ring-blue-500 focus:border-blue-500 p-2 shadow-sm">
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <label for="delay" class="block text-sm font-medium mb-1">Simulation Speed (Network Delay: <span id="delay-value">20</span>ms)</label>
+                        <input type="range" id="delay" min="1" max="100" value="20" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                        <button id="run-unsafe" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">
+                            Run Unsafe Simulation (Shows Race Condition)
+                        </button>
+                        <button id="run-safe" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-all duration-200">
+                            Run Safe Simulation (Uses Mutex)
+                        </button>
+                    </div>
+                </div>
+
+                <div id="log-container" class="bg-gray-800 p-4 rounded-lg shadow-lg flex flex-col">
+                    <div class="flex justify-between items-center mb-2">
+                        <h2 class="text-lg font-semibold">Simulation Log</h2>
+                        <button id="clear-log" class="text-gray-400 hover:text-white text-sm">Clear</button>
+                    </div>
+                    <pre id="log" class="w-full bg-gray-900 rounded-md p-3 text-xs text-gray-300 shadow-inner flex-1"></pre>
+                </div>
+            </div>
+
+            <div class="flex-1 flex flex-col overflow-hidden gap-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-gray-800 p-4 rounded-lg shadow-lg text-center">
+                        <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wider">Items in Stock</h3>
+                        <span id="live-stock-count" class="text-5xl font-bold text-white">0</span>
+                    </div>
+                    <div class="bg-gray-800 p-4 rounded-lg shadow-lg text-center">
+                        <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wider">Mutex Lock Status</h3>
+                        <span id="lock-status" class="block text-xl font-bold text-green-400 bg-gray-700 rounded-md p-2 mt-2 transition-all duration-200">UNLOCKED</span>
+                    </div>
+                </div>
+                
+                <div id="summary-container" class="bg-gray-800 p-4 rounded-lg shadow-lg hidden">
+                    <h2 class="text-lg font-semibold mb-2">Simulation Summary</h2>
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div>
+                            <span class="text-sm text-gray-400">Successful</span>
+                            <span id="summary-success" class="block text-2xl font-bold text-green-400">0</span>
+                        </div>
+                        <div>
+                            <span class="text-sm text-gray-400">Failed</span>
+                            <span id="summary-failed" class="block text-2xl font-bold text-red-400">0</span>
+                        </div>
+                        <div>
+                            <span class="text-sm text-gray-400">Final Stock</span>
+                            <span id="summary-final" class="block text-2xl font-bold text-white">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="user-grid-container" class="bg-gray-800 p-4 rounded-lg shadow-lg flex flex-col">
+                    <h2 class="text-lg font-semibold mb-2">Live User Status</h2>
+                    <div id="user-grid" class="w-full grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-10 gap-2 p-2 bg-gray-900 rounded-md shadow-inner flex-1">
+                        </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const stockInput = document.getElementById('stock');
+        const usersInput = document.getElementById('users');
+        const delaySlider = document.getElementById('delay');
+        const delayValue = document.getElementById('delay-value');
+        const runUnsafeBtn = document.getElementById('run-unsafe');
+        const runSafeBtn = document.getElementById('run-safe');
+        const clearLogBtn = document.getElementById('clear-log');
+        
+        const logElement = document.getElementById('log');
+        const userGrid = document.getElementById('user-grid');
+        
+        const liveStockCount = document.getElementById('live-stock-count');
+        const lockStatus = document.getElementById('lock-status');
+        
+        const summaryContainer = document.getElementById('summary-container');
+        const summarySuccess = document.getElementById('summary-success');
+        const summaryFailed = document.getElementById('summary-failed');
+        const summaryFinal = document.getElementById('summary-final');
+
+        // --- Global State ---
+        let inventory_count = 0;
+        let success_count = 0;
+        let fail_count = 0;
+        let js_mutex_lock = false; // Our JavaScript-based Mutex lock
+
+        // --- Helper Functions ---
+
+        // Logs a message to the on-screen console
+        function log(message) {
+            logElement.textContent += message + '\n';
+            logElement.scrollTop = logElement.scrollHeight; // Auto-scroll
+        }
+
+        // Resets the entire simulation UI
+        function resetSimulation() {
+            logElement.textContent = '';
+            userGrid.innerHTML = ''; // Clear all user boxes
+            summaryContainer.classList.add('hidden'); // Hide summary
+            
+            // Check if input elements exist before accessing value
+            if (stockInput) {
+                inventory_count = parseInt(stockInput.value);
+                liveStockCount.textContent = inventory_count;
+            } else {
+                inventory_count = 20; // Default fallback
+                liveStockCount.textContent = inventory_count;
+            }
+            
+            liveStockCount.className = 'text-5xl font-bold text-white';
+            
+            lockStatus.textContent = 'UNLOCKED';
+            lockStatus.className = 'block text-xl font-bold text-green-400 bg-gray-700 rounded-md p-2 mt-2 transition-all duration-200';
+            
+            success_count = 0;
+            fail_count = 0;
+        }
+
+        // Simulates a delay based on the slider
+        function delay() {
+            const ms = parseInt(delaySlider.value);
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Disables/Enables buttons during simulation
+        function setControlsDisabled(disabled) {
+            stockInput.disabled = disabled;
+            usersInput.disabled = disabled;
+            delaySlider.disabled = disabled;
+            runUnsafeBtn.disabled = disabled;
+            runSafeBtn.disabled = disabled;
+            
+            // --- THIS IS THE NEW FIX ---
+            // 'toggle' can't handle multiple classes in one string.
+            // We must toggle each class individually.
+            runUnsafeBtn.classList.toggle('opacity-50', disabled);
+            runUnsafeBtn.classList.toggle('cursor-not-allowed', disabled);
+            runSafeBtn.classList.toggle('opacity-50', disabled);
+            runSafeBtn.classList.toggle('cursor-not-allowed', disabled);
+            // --- END OF FIX ---
+        }
+
+        // Dynamically creates the user boxes
+        function populateUserGrid(userCount) {
+            // Cap the number of boxes to avoid crashing the browser on huge numbers
+            const displayCount = Math.min(userCount, 500); 
+            userGrid.innerHTML = ''; // Clear previous grid
+            for (let i = 1; i <= displayCount; i++) {
+                const userBox = document.createElement('div');
+                userBox.id = `user-${i}`;
+                userBox.className = 'user-status p-2 rounded bg-gray-600 text-white text-xs font-medium text-center shadow-md';
+                userBox.textContent = `User ${i}`;
+                userGrid.appendChild(userBox);
+            }
+            if(userCount > displayCount) {
+                const moreBox = document.createElement('div');
+                moreBox.className = 'p-2 rounded bg-gray-700 text-white text-xs font-medium text-center shadow-md';
+                moreBox.textContent = `+ ${userCount - displayCount} more`;
+                userGrid.appendChild(moreBox);
+            }
+        }
+        
+        // Gets the user box, handling cases where it might not be rendered
+        function getUserBox(userId) {
+             return document.getElementById(`user-${userId}`);
+        }
+
+        // --- Core Simulation Logic ---
+
+        /**
+         * UNSAFE purchase attempt.
+         */
+        async function purchase_attempt_unsafe(userId) {
+            const userBox = getUserBox(userId);
+            if(userBox) {
+                userBox.className = 'user-status p-2 rounded bg-yellow-500 text-black text-xs font-medium text-center shadow-md';
+                userBox.textContent = 'Checking';
+            }
+
+            // 1. Read the global value into a local variable
+            const current_stock = inventory_count;
+            log(`User ${userId}: Checking stock... (sees ${current_stock})`);
+
+            // 2. Simulate a delay (network/processing).
+            await delay(); 
+
+            // 3. Act based on the STALE local value
+            if (current_stock > 0) {
+                // 4. Write the new value back, overwriting other users' work
+                inventory_count = current_stock - 1;
+                liveStockCount.textContent = inventory_count; // Update live counter
+                log(`User ${userId}: Purchase SUCCESSFUL! Stock is now ${inventory_count}`);
+                
+                if(userBox) {
+                    userBox.className = 'user-status p-2 rounded bg-green-500 text-white text-xs font-medium text-center shadow-md';
+                    userBox.textContent = 'Success';
+                }
+                success_count++;
+            } else {
+                log(`User ${userId}: Purchase FAILED. Out of stock.`);
+                if(userBox) {
+                    userBox.className = 'user-status p-2 rounded bg-red-500 text-white text-xs font-medium text-center shadow-md';
+                    userBox.textContent = 'Failed';
+                }
+                fail_count++;
+            }
+            
+            // Highlight negative stock
+            if (inventory_count < 0) {
+                liveStockCount.className = 'text-5xl font-bold text-red-500';
+            }
+        }
+
+        /**
+         * SAFE purchase attempt using a Mutex.
+         */
+        async function purchase_attempt_safe(userId) {
+            const userBox = getUserBox(userId);
+            if(userBox) {
+                userBox.className = 'user-status p-2 rounded bg-yellow-500 text-black text-xs font-medium text-center shadow-md';
+                userBox.textContent = 'Waiting';
+            }
+
+            // 1. Attempt to acquire the lock.
+            while (js_mutex_lock) {
+                await new Promise(r => setTimeout(r, 5)); // Spin-wait
+            }
+
+            // 2. Lock Acquired!
+            js_mutex_lock = true;
+            lockStatus.textContent = 'LOCKED';
+            lockStatus.className = 'block text-xl font-bold text-red-400 bg-red-900 rounded-md p-2 mt-2 transition-all duration-200';
+            if(userBox) userBox.textContent = 'Checking';
+            log(`User ${userId}: Acquired lock.`);
+
+            // --- CRITICAL SECTION START ---
+            
+            // 3. Read the global value (guaranteed fresh)
+            const current_stock = inventory_count;
+            log(`User ${userId}: Checking stock... (sees ${current_stock})`);
+
+            // 4. Simulate delay
+            await delay();
+
+            // 5. Act on the fresh value
+            if (current_stock > 0) {
+                // 6. Write the new value back.
+                inventory_count = current_stock - 1;
+                liveStockCount.textContent = inventory_count; // Update live counter
+                log(`User ${userId}: Purchase SUCCESSFUL! Stock is now ${inventory_count}`);
+                
+                if(userBox) {
+                    userBox.className = 'user-status p-2 rounded bg-green-500 text-white text-xs font-medium text-center shadow-md';
+                    userBox.textContent = 'Success';
+                }
+                success_count++;
+            } else {
+                log(`User ${userId}: Purchase FAILED. Out of stock.`);
+                if(userBox) {
+                    userBox.className = 'user-status p-2 rounded bg-red-500 text-white text-xs font-medium text-center shadow-md';
+                    userBox.textContent = 'Failed';
+                }
+                fail_count++;
+            }
+            // --- CRITICAL SECTION END ---
+
+            // 7. Release the lock
+            js_mutex_lock = false;
+            lockStatus.textContent = 'UNLOCKED';
+            lockStatus.className = 'block text-xl font-bold text-green-400 bg-gray-700 rounded-md p-2 mt-2 transition-all duration-200';
+            log(`User ${userId}: Released lock.`);
+        }
+
+
+        // --- Event Listeners ---
+
+        // Main Simulation Runner
+        async function runSimulation(simulationType) {
+            resetSimulation();
+            setControlsDisabled(true);
+
+            const stock = parseInt(stockInput.value);
+            const users = parseInt(usersInput.value);
+            
+            if (isNaN(stock) || isNaN(users) || stock < 0 || users < 1) {
+                alert("Please enter valid, positive numbers for stock and users.");
+                setControlsDisabled(false);
+                return;
+            }
+
+            populateUserGrid(users); // Create the UI boxes
+
+            const isSafe = simulationType === 'safe';
+            const purchaseFunction = isSafe ? purchase_attempt_safe : purchase_attempt_unsafe;
+
+            log(`--- Starting ${isSafe ? 'SAFE (Mutex)' : 'UNSAFE'} Simulation ---`);
+            log(`Initial Stock: ${stock}, Users: ${users}\n`);
+
+            // Create an array of promises, one for each user
+            const userPromises = [];
+            for (let i = 1; i <= users; i++) {
+                userPromises.push(purchaseFunction(i));
+            }
+
+            // Wait for all users to finish
+            await Promise.all(userPromises);
+
+            log('\n--- Simulation Finished ---');
+            log(`Expected Stock: ${Math.max(0, stock - users)}`);
+            log(`Actual Final Stock: ${inventory_count}`);
+
+            // Show final summary
+            summarySuccess.textContent = success_count;
+            summaryFailed.textContent = fail_count;
+            summaryFinal.textContent = inventory_count;
+            summaryContainer.classList.remove('hidden');
+
+            // Set final color for stock count
+            if (isSafe) {
+                liveStockCount.className = 'text-5xl font-bold text-green-400';
+                summaryFinal.className = 'block text-2xl font-bold text-green-400';
+            } else {
+                const expectedFinal = Math.max(0, stock - users);
+                const finalClass = (inventory_count === expectedFinal) ? 'text-green-400' : 'text-red-400';
+                liveStockCount.className = `text-5xl font-bold ${finalClass}`;
+                summaryFinal.className = `block text-2xl font-bold ${finalClass}`;
+            }
+
+            setControlsDisabled(false);
+        }
+
+        runUnsafeBtn.addEventListener('click', () => runSimulation('unsafe'));
+        runSafeBtn.addEventListener('click', () => runSimulation('safe'));
+        clearLogBtn.addEventListener('click', resetSimulation);
+        delaySlider.addEventListener('input', (e) => {
+            delayValue.textContent = e.target.value;
+        });
+
+        // Initial setup
+        // Wait for DOM to be fully loaded before running resetSimulation
+        document.addEventListener('DOMContentLoaded', () => {
+            // FIXED: This was 'reset.simulation()' which is a typo.
+            // It is now 'resetSimulation()'
+            resetSimulation(); 
+            if(delaySlider) {
+                 delayValue.textContent = delaySlider.value;
+            }
+        });
+
+    </script>
+</body>
+</html>
